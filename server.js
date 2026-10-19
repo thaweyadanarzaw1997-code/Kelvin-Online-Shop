@@ -25,13 +25,25 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Google Sheets Authentication using credentials.json file directly in repo
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json',
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-const sheets = google.sheets({ version: 'v4', auth });
+// Google Sheets Authentication using Separated Environment Variables
+let auth;
+try {
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
+  // Fix escaped newlines if any
+  privateKey = privateKey.replace(/\\n/g, '\n');
 
+  auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      private_key: privateKey,
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+} catch (e) {
+  console.error("Google Auth Setup Error:", e.message);
+}
+
+const sheets = google.sheets({ version: 'v4', auth });
 const adminStates = {};
 
 // 1. Get Items API (Sheet1 မှ Product များကို Odoo သို့ ပို့ပေးမည်)
