@@ -15,25 +15,37 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 const upload = multer({ dest: '/tmp/' });
 
+// Environment Variables Configuration
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
+// Cloudinary Configuration (For Voucher Photos)
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json',
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-const sheets = google.sheets({ version: 'v4', auth });
+// Google Sheets Authentication using Vercel Environment Variable (GOOGLE_SERVICE_ACCOUNT)
+let auth;
+try {
+  const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+  auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: serviceAccountKey.client_email,
+      private_key: serviceAccountKey.private_key,
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+} catch (e) {
+  console.error("Google Service Account JSON Parse Error:", e.message);
+}
 
+const sheets = google.sheets({ version: 'v4', auth });
 const adminStates = {};
 
-// 1. Get Items API (Sheet1 မှ Product များကို လှမ်းယူမည်)
+// 1. Get Items API (Sheet1 မှ Product များကို Odoo သို့ ပို့ပေးမည်)
 app.get('/api/items', async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
@@ -60,12 +72,13 @@ app.get('/api/items', async (req, res) => {
   }
 });
 
-// 2. Customer Order API
+// 2. Customer Order API (Odoo မှ အော်ဒါတင်လျှင် လက်ခံမည်)
 app.post('/api/order', async (req, res) => {
   try {
     const data = req.body;
     let photoUrl = "";
     
+    // Upload Voucher Photo to Cloudinary
     if (data.photoBase64) {
       const uploadResponse = await cloudinary.uploader.upload(`data:image/jpeg;base64,${data.photoBase64}`, {
         folder: 'fragrance_vouchers'
@@ -97,6 +110,7 @@ app.post('/api/order', async (req, res) => {
       requestBody: { values: [rowValues] }
     });
 
+    // Send Telegram Notification with Add Waybill & Cancel Buttons
     const caption = `🛒 *New Order Received (Odoo)*\n\n` +
                     `🆔 Order ID: \`${orderId}\`\n` +
                     `👤 Name: ${data.customer}\n` +
@@ -130,7 +144,7 @@ app.post('/api/order', async (req, res) => {
   }
 });
 
-// 3. Telegram Webhook
+// 3. Telegram Webhook (Buttons, Waybill input, Excel processing, Reports)
 app.post('/api/telegram-webhook', upload.single('document'), async (req, res) => {
   try {
     const update = req.body;
