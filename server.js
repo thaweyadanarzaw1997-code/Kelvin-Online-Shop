@@ -9,12 +9,15 @@ const fs = require('fs');
 const cors = require('cors');
 
 const app = express();
+
+// Middleware Setups
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 const upload = multer({ dest: '/tmp/' });
 
+// Environment Variables
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -25,51 +28,69 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Google Sheets Authentication using GOOGLE_SERVICE_ACCOUNT JSON env variable (Corrected position)
+// Initialize Google Sheets API Authentication FIRST
 let auth;
 try {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT environment variable is missing!");
+    console.error("CRITICAL ERROR: GOOGLE_SERVICE_ACCOUNT variable is missing in Vercel!");
+  } else {
+    const serviceAccountKey = typeof process.env.GOOGLE_SERVICE_ACCOUNT === 'string'
+      ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT)
+      : process.env.GOOGLE_SERVICE_ACCOUNT;
+
+    auth = new google.auth.GoogleAuth({
+      credentials: {
+        client_email: serviceAccountKey.client_email,
+        private_key: serviceAccountKey.private_key,
+      },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    console.log("Google Auth initialized successfully for:", serviceAccountKey.client_email);
   }
-  const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-  auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: serviceAccountKey.client_email,
-      private_key: serviceAccountKey.private_key,
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  console.log("Google Auth initialized successfully for:", serviceAccountKey.client_email);
 } catch (e) {
-  console.error("Google Auth Setup Error:", e.message);
+  console.error("Google Auth Initialization Error:", e.message);
 }
 
 const sheets = google.sheets({ version: 'v4', auth });
 const adminStates = {};
 
-// 1. Get Items API (Sheet1 မှ Product များကို Odoo သို့ ပို့ပေးမည်)
+// Root / Test Route
+app.get('/', (req, res) => {
+  res.send('Kelvin Online Shop Backend API is running!');
+});
+
+// 1. Get Items API (Sheet1 မှ Product များကို ထုတ်ပေးမည်)
 app.get('/api/items', async (req, res) => {
   try {
+    if (!auth) {
+      return res.status(500).json({ status: 'error', message: 'Google Auth is not initialized. Check Environment Variables.' });
+    }
+
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: 'Sheet1!A:L',
     });
+
     const rows = response.data.values;
-    if (!rows || rows.length < 2) return res.json({ items: [] });
-    
+    if (!rows || rows.length < 2) {
+      return res.json({ status: 'success', items: [], sysDate: new Date().toISOString().split('T')[0] });
+    }
+
     let items = [];
     for (let i = 1; i < rows.length; i++) {
       let r = rows[i];
       items.push({
-        productId: r[0], productName: r[1], imageUrl: r[2],
+        productId: r[0] || '', productName: r[1] || '', imageUrl: r[2] || '',
         price3ml: Number(r[3]) || 0, price5ml: Number(r[4]) || 0,
         price10ml: Number(r[5]) || 0, price30ml: Number(r[6]) || 0,
         price100ml: Number(r[7]) || 0, category: r[8] || 'All',
         type: r[9] || '', description: r[10] || '', status: r[11] || 'Active'
       });
     }
+
     res.json({ status: 'success', items, sysDate: new Date().toISOString().split('T')[0] });
   } catch (err) {
+    console.error("Error fetching items:", err.message);
     res.status(500).json({ status: 'error', message: err.toString() });
   }
 });
@@ -79,7 +100,7 @@ app.post('/api/order', async (req, res) => {
   try {
     const data = req.body;
     let photoUrl = "";
-    
+
     if (data.photoBase64) {
       const uploadResponse = await cloudinary.uploader.upload(`data:image/jpeg;base64,${data.photoBase64}`, {
         folder: 'fragrance_vouchers'
@@ -89,11 +110,12 @@ app.post('/api/order', async (req, res) => {
 
     const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
     const items = typeof data.items === 'string' ? JSON.parse(data.items) : data.items;
-    
+
     const sheetData = await sheets.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: 'Sheet2!A:M',
     });
+
     const nextRow = (sheetData.data.values ? sheetData.data.values.length : 1) + 1;
     const orderId = `ORD-${todayStr}-${String(nextRow).padStart(4, '0')}`;
 
@@ -140,6 +162,7 @@ app.post('/api/order', async (req, res) => {
 
     res.json({ result: 'success', orderId });
   } catch (err) {
+    console.error("Order Error:", err.message);
     res.status(500).json({ result: 'error', message: err.toString() });
   }
 });
@@ -148,7 +171,7 @@ app.post('/api/order', async (req, res) => {
 app.post('/api/telegram-webhook', upload.single('document'), async (req, res) => {
   try {
     const update = req.body;
-    
+
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id;
@@ -208,7 +231,7 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
     }
     res.sendStatus(200);
   } catch (err) {
-    console.error(err);
+    console.error("Webhook Error:", err);
     res.sendStatus(500);
   }
 });
@@ -288,7 +311,7 @@ async function processExcelUpload(excelRows, chatId) {
 async function sendReportExcel(chatId, statusFilter) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
-  
+
   let filtered = rows.filter(r => r[7] === statusFilter);
   let wbData = [["Date", "Customer", "Phone", "Address", "Items", "Total", "Status", "Payment", "OrderID", "Waybill"]];
   filtered.forEach(r => {
@@ -298,7 +321,7 @@ async function sendReportExcel(chatId, statusFilter) {
   const ws = XLSX.utils.aoa_to_sheet(wbData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, `${statusFilter} Orders`);
-  
+
   const filePath = `/tmp/${statusFilter}_Report.xlsx`;
   XLSX.writeFile(wb, filePath);
 
