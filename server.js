@@ -10,14 +10,12 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware Setups
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 const upload = multer({ dest: '/tmp/' });
 
-// Environment Variables
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -28,24 +26,25 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Initialize Google Sheets API Authentication FIRST
+// Google Sheets Authentication using Separated Environment Variables
 let auth;
 try {
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
-    console.error("CRITICAL ERROR: GOOGLE_SERVICE_ACCOUNT variable is missing in Vercel!");
-  } else {
-    const serviceAccountKey = typeof process.env.GOOGLE_SERVICE_ACCOUNT === 'string'
-      ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT)
-      : process.env.GOOGLE_SERVICE_ACCOUNT;
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
+  if (privateKey.includes('\\n')) {
+    privateKey = privateKey.replace(/\\n/g, '\n');
+  }
 
+  if (!process.env.GOOGLE_CLIENT_EMAIL || !privateKey) {
+    console.error("CRITICAL ERROR: Google Credentials are missing in environment variables!");
+  } else {
     auth = new google.auth.GoogleAuth({
       credentials: {
-        client_email: serviceAccountKey.client_email,
-        private_key: serviceAccountKey.private_key,
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        private_key: privateKey,
       },
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
-    console.log("Google Auth initialized successfully for:", serviceAccountKey.client_email);
+    console.log("Google Auth initialized successfully for:", process.env.GOOGLE_CLIENT_EMAIL);
   }
 } catch (e) {
   console.error("Google Auth Initialization Error:", e.message);
@@ -54,7 +53,6 @@ try {
 const sheets = google.sheets({ version: 'v4', auth });
 const adminStates = {};
 
-// Root / Test Route
 app.get('/', (req, res) => {
   res.send('Kelvin Online Shop Backend API is running!');
 });
