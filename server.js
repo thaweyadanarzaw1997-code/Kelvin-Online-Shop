@@ -25,9 +25,12 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Google Sheets Authentication using GOOGLE_SERVICE_ACCOUNT JSON env variable
+// Google Sheets Authentication using GOOGLE_SERVICE_ACCOUNT JSON env variable (Corrected position)
 let auth;
 try {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT environment variable is missing!");
+  }
   const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
   auth = new google.auth.GoogleAuth({
     credentials: {
@@ -36,6 +39,7 @@ try {
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
+  console.log("Google Auth initialized successfully for:", serviceAccountKey.client_email);
 } catch (e) {
   console.error("Google Auth Setup Error:", e.message);
 }
@@ -312,22 +316,3 @@ async function sendReportExcel(chatId, statusFilter) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-// Google Sheets Authentication using GOOGLE_SERVICE_ACCOUNT JSON env variable
-let auth;
-try {
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT environment variable is missing!");
-  }
-  const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-  auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: serviceAccountKey.client_email,
-      private_key: serviceAccountKey.private_key,
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  console.log("Google Auth initialized successfully for:", serviceAccountKey.client_email);
-} catch (e) {
-  console.error("Google Auth Setup Error:", e.message);
-}
