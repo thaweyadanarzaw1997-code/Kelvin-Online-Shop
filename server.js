@@ -7,13 +7,6 @@ const cloudinary = require('cloudinary').v2;
 const XLSX = require('xlsx');
 const fs = require('fs');
 const cors = require('cors');
-const crypto = require('crypto');
-
-// Fix for Node.js v17+ OpenSSL legacy crypto support
-try {
-  const origCreateHash = crypto.createHash;
-  crypto.createHash = alg => origCreateHash(alg === 'md4' ? 'sha256' : alg);
-} catch (e) {}
 
 const app = express();
 app.use(cors());
@@ -32,18 +25,14 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Google Sheets Authentication using GOOGLE_PRIVATE_KEY & GOOGLE_CLIENT_EMAIL
+// Google Sheets Authentication using GOOGLE_SERVICE_ACCOUNT JSON env variable
 let auth;
 try {
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
-  if (privateKey.includes('\\n')) {
-    privateKey = privateKey.replace(/\\n/g, '\n');
-  }
-
+  const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
   auth = new google.auth.GoogleAuth({
     credentials: {
-      client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      private_key: privateKey,
+      client_email: serviceAccountKey.client_email,
+      private_key: serviceAccountKey.private_key,
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
