@@ -7,6 +7,13 @@ const cloudinary = require('cloudinary').v2;
 const XLSX = require('xlsx');
 const fs = require('fs');
 const cors = require('cors');
+const crypto = require('crypto');
+
+// Fix for Node.js v17+ OpenSSL legacy crypto support
+try {
+  const origCreateHash = crypto.createHash;
+  crypto.createHash = alg => origCreateHash(alg === 'md4' ? 'sha256' : alg);
+} catch (e) {}
 
 const app = express();
 app.use(cors());
@@ -25,12 +32,13 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Google Sheets Authentication using Separated Environment Variables
+// Google Sheets Authentication using GOOGLE_PRIVATE_KEY & GOOGLE_CLIENT_EMAIL
 let auth;
 try {
   let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
-  // Fix escaped newlines if any
-  privateKey = privateKey.replace(/\\n/g, '\n');
+  if (privateKey.includes('\\n')) {
+    privateKey = privateKey.replace(/\\n/g, '\n');
+  }
 
   auth = new google.auth.GoogleAuth({
     credentials: {
