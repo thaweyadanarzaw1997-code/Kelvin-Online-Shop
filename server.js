@@ -135,7 +135,8 @@ app.post('/api/order', async (req, res) => {
       requestBody: { values: [rowValues] }
     });
 
-    const caption = `🛒 *New Order Received*\n\n` +
+    const caption = `✨ *FRAGRANCE BY KELVIN* ✨\n\n` +
+                    `🛒 *New Order Received*\n\n` +
                     `🆔 Order ID: \`${orderId}\`\n` +
                     `👤 Name: ${data.customer}\n` +
                     `📞 Phone: ${data.phone}\n` +
@@ -204,18 +205,24 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
     if (update.message) {
       const msg = update.message;
       const chatId = msg.chat.id;
+      const textMsg = (msg.text || '').trim();
 
-      if (msg.text === '/pending') {
+      if (textMsg === '/pending') {
         await sendOrdersListByStatus(chatId, 'Pending', true);
       }
-      else if (msg.text === '/inprogress') {
+      else if (textMsg === '/inprogress') {
         await sendOrdersListByStatus(chatId, 'In Progress', false);
       }
-      else if (msg.text === '/finish') {
+      else if (textMsg === '/finish') {
         await sendReportExcel(chatId, 'Finish');
       }
+      else if (textMsg.startsWith('/ORD-') || textMsg.startsWith('/ord-')) {
+        // Handle /ORD-xxxx lookup command
+        const lookupOrderId = textMsg.replace('/', '');
+        await sendVoucherByOrderId(chatId, lookupOrderId);
+      }
       else if (adminStates[chatId] && adminStates[chatId].action === 'waiting_waybill') {
-        const waybillNo = msg.text.trim();
+        const waybillNo = textMsg;
         const orderId = adminStates[chatId].orderId;
         delete adminStates[chatId];
 
@@ -280,6 +287,85 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   }
 }
 
+// Function to send Voucher photo/details when typing /ORD-xxxx
+async function sendVoucherByOrderId(chatId, orderId) {
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
+  const rows = res.data.values || [];
+  
+  let foundRow = null;
+  for (let r of rows) {
+    if (r[10] && r[10].toString().trim().toLowerCase() === orderId.toLowerCase()) {
+      foundRow = r;
+      break;
+    }
+  }
+
+  if (!foundRow) {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId, text: `❌ Order ID (${orderId}) ကို ရှာမတွေ့ပါ။ ကျေးဇူးပြု၍ နံပါတ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။`
+    });
+    return;
+  }
+
+  const date = foundRow[0] || 'N/A';
+  const customer = foundRow[1] || 'N/A';
+  const phone = foundRow[2] || 'N/A';
+  const address = foundRow[4] || 'N/A';
+  const items = foundRow[5] || 'N/A';
+  const total = foundRow[6] || 0;
+  const status = foundRow[7] || 'N/A';
+  const photoUrl = foundRow[8] || '';
+  const payment = foundRow[9] || 'N/A';
+  const waybill = foundRow[12] || foundRow[11] || 'ยังไม่ระบุ / None';
+
+  const voucherText = `✨ *FRAGRANCE BY KELVIN* ✨\n` +
+                      `━━━━━━━━━━━━━━━━━━━\n` +
+                      `📄 *OFFICIAL ORDER VOUCHER*\n\n` +
+                      `🆔 Order ID: \`${orderId}\`\n` +
+                      `📅 Date: ${date}\n` +
+                      `👤 Name: ${customer}\n` +
+                      `📞 Phone: ${phone}\n` +
+                      `📍 Address: ${address}\n\n` +
+                      `🛍 *Items:* \n${items}\n\n` +
+                      `💰 Payment: ${payment}\n` +
+                      `💵 Total: ${Number(total).toLocaleString()} Ks\n` +
+                      `📦 Status: ${status}\n` +
+                      `🚚 Waybill: ${waybill}\n` +
+                      `━━━━━━━━━━━━━━━━━━━\n` +
+                      `_Thank you for shopping with us!_`;
+
+  let keyboardRows = [];
+  if (status === 'Pending') {
+    keyboardRows.push([
+      { text: "➕ Add WayBill", callback_data: `add_wb_${orderId}` },
+      { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
+    ]);
+  } else if (status === 'In Progress') {
+    keyboardRows.push([
+      { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
+    ]);
+  }
+
+  const replyMarkup = keyboardRows.length > 0 ? { inline_keyboard: keyboardRows } : undefined;
+
+  if (photoUrl && photoUrl.startsWith('http')) {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+      chat_id: chatId,
+      photo: photoUrl,
+      caption: voucherText,
+      parse_mode: 'Markdown',
+      reply_markup: replyMarkup
+    });
+  } else {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: voucherText,
+      parse_mode: 'Markdown',
+      reply_markup: replyMarkup
+    });
+  }
+}
+
 async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
@@ -302,7 +388,8 @@ async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
     const total = r[6] || 0;
     const payment = r[9] || 'N/A';
 
-    const text = `📦 *${statusFilter} Order*\n\n` +
+    const text = `✨ *FRAGRANCE BY KELVIN* ✨\n\n` +
+                 `📦 *${statusFilter} Order*\n\n` +
                  `🆔 Order ID: \`${orderId}\`\n` +
                  `👤 Name: ${customer}\n` +
                  `📞 Phone: ${phone}\n` +
@@ -344,7 +431,6 @@ async function processExcelUpload(excelRows, chatId) {
 
   for (let i = 1; i < excelRows.length; i++) {
     const row = excelRows[i];
-    // ပို့ဆောင်ရေး Excel ဖိုင်၏ Column E (Index 4) တွင် Waybill ပါရှိ므로 ၎င်းကို အဓိက ယူပါမည်။
     const waybill = (row[4] || row[3] || row[2] || '').toString().trim();
     if (!waybill) continue;
 
@@ -357,7 +443,6 @@ async function processExcelUpload(excelRows, chatId) {
       newRowsCount++;
     }
 
-    // Sheet2 တွင် Waybill တူညီသော Order ကို ရှာပြီး Status ကို "Finish" သို့ ပြောင်းမည်
     for (let j = 0; j < sheet2Rows.length; j++) {
       const s2Row = sheet2Rows[j];
       const s2Waybill = (s2Row[11] || s2Row[12] || '').toString().trim();
