@@ -7,7 +7,7 @@ const cloudinary = require('cloudinary').v2;
 const XLSX = require('xlsx');
 const fs = require('fs');
 const cors = require('cors');
-const sharp = require('sharp');
+const Jimp = require('jimp');
 const FormData = require('form-data');
 
 const app = express();
@@ -288,7 +288,7 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   }
 }
 
-// Generate PNG Voucher Image with Logo and send as Photo
+// Generate PNG Voucher Image using Jimp and send as Photo
 async function sendVoucherPngByOrderId(chatId, orderId) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
@@ -318,72 +318,27 @@ async function sendVoucherPngByOrderId(chatId, orderId) {
   const payment = foundRow[9] || 'N/A';
   const waybill = foundRow[12] || foundRow[11] || 'None';
 
-  // Build SVG for Voucher with Logo branding
-  const svgWidth = 700;
-  const svgHeight = 900;
-  const svgContent = `
-    <svg width="${svgWidth}" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg">
-      <style>
-        .brand-title { font-family: serif; font-weight: bold; fill: #c5a059; font-size: 32px; text-anchor: middle; letter-spacing: 2px; }
-        .brand-sub { font-family: sans-serif; font-weight: bold; fill: #666; font-size: 12px; letter-spacing: 6px; text-anchor: middle; }
-        .voucher-title { font-family: sans-serif; font-weight: bold; fill: #333; font-size: 18px; text-anchor: middle; letter-spacing: 1px; }
-        .label { font-family: sans-serif; font-weight: bold; fill: #555; font-size: 16px; }
-        .value { font-family: sans-serif; fill: #222; font-size: 16px; }
-        .total-label { font-family: sans-serif; font-weight: bold; fill: #81602d; font-size: 20px; }
-        .total-value { font-family: sans-serif; font-weight: bold; fill: #c5a059; font-size: 24px; text-anchor: end; }
-      </style>
-      
-      <!-- Background & Border -->
-      <rect width="100%" height="100%" fill="#faf9f6" rx="20" ry="20" stroke="#c5a059" stroke-width="4"/>
-      
-      <!-- Header / Logo Area -->
-      <circle cx="350" cy="75" r="35" fill="#121212" stroke="#c5a059" stroke-width="2"/>
-      <text x="350" y="87" font-family="serif" font-size="32" font-weight="bold" fill="#c5a059" text-anchor="middle">K</text>
-      
-      <text x="350" y="145" class="brand-title">FRAGRANCE</text>
-      <text x="350" y="170" class="brand-sub">BY KELVIN</text>
-      
-      <line x1="60" y1="195" x2="640" y2="195" stroke="#e5b33d" stroke-dasharray="6,6" stroke-width="2"/>
-      <text x="350" y="230" class="voucher-title">OFFICIAL ORDER VOUCHER</text>
-      
-      <!-- Details Section -->
-      <text x="80" y="280" class="label">Order ID:</text>
-      <text x="220" y="280" class="value" font-weight="bold" fill="#c5a059">${orderId}</text>
-      
-      <text x="80" y="325" class="label">Date:</text>
-      <text x="220" y="325" class="value">${date}</text>
-      
-      <text x="80" y="370" class="label">Customer:</text>
-      <text x="220" y="370" class="value">${customer}</text>
-      
-      <text x="80" y="415" class="label">Phone:</text>
-      <text x="220" y="415" class="value">${phone}</text>
-      
-      <text x="80" y="460" class="label">Address:</text>
-      <text x="220" y="460" class="value">${address}</text>
-      
-      <line x1="60" y1="500" x2="640" y2="500" stroke="#ddd" stroke-width="1"/>
-      
-      <text x="80" y="540" class="label">Items:</text>
-      <text x="220" y="540" class="value" font-size="15">${items}</text>
-      
-      <line x1="60" y1="640" x2="640" y2="640" stroke="#ddd" stroke-width="1"/>
-      
-      <text x="80" y="685" class="label">Payment:</text>
-      <text x="220" y="685" class="value">${payment}</text>
-      
-      <text x="80" y="730" class="label">Status / Waybill:</text>
-      <text x="220" y="730" class="value">${status} (${waybill})</text>
-      
-      <!-- Total Box -->
-      <rect x="60" y="770" width="580" height="70" fill="#fef9e7" rx="10" ry="10" stroke="#eecc6c" stroke-width="1.5"/>
-      <text x="95" y="813" class="total-label">Total Amount:</text>
-      <text x="605" y="815" class="total-value">${total}</text>
-    </svg>
-  `;
+  // Create Voucher image using Jimp
+  const image = await Jimp.create(650, 850, 0xFFFAF9F6);
+  const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_32_BLACK);
+  const fontSub = await Jimp.loadFont(Jimp.FONT_SANS_14_BLACK);
+  const fontText = await Jimp.loadFont(Jimp.FONT_SANS_16_BLACK);
 
-  // Convert SVG to PNG buffer using sharp
-  const pngBuffer = await sharp(Buffer.from(svgContent)).png().toBuffer();
+  image.print(fontTitle, 0, 40, { text: 'FRAGRANCE', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 650);
+  image.print(fontSub, 0, 80, { text: 'BY KELVIN', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 650);
+
+  image.print(fontText, 50, 130, `Order ID: ${orderId}`);
+  image.print(fontText, 50, 170, `Date: ${date}`);
+  image.print(fontText, 50, 210, `Customer: ${customer}`);
+  image.print(fontText, 50, 250, `Phone: ${phone}`);
+  image.print(fontText, 50, 290, `Address: ${address}`);
+  image.print(fontText, 50, 350, `Items: ${items}`);
+  image.print(fontText, 50, 530, `Payment: ${payment}`);
+  image.print(fontText, 50, 570, `Status: ${status}`);
+  image.print(fontText, 50, 610, `Waybill: ${waybill}`);
+  image.print(fontText, 50, 680, `Total Amount: ${total}`);
+
+  const pngBuffer = await image.getBufferAsync(Jimp.MIME_PNG);
 
   let keyboardRows = [];
   if (status === 'Pending') {
@@ -399,7 +354,6 @@ async function sendVoucherPngByOrderId(chatId, orderId) {
 
   const replyMarkup = keyboardRows.length > 0 ? { inline_keyboard: keyboardRows } : undefined;
 
-  // Send PNG Buffer as Photo via FormData
   const formData = new FormData();
   formData.append('chat_id', chatId);
   formData.append('photo', pngBuffer, { filename: `${orderId}.png`, contentType: 'image/png' });
