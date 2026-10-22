@@ -54,7 +54,7 @@ app.get('/', (req, res) => {
   res.send('Kelvin Online Shop Backend API is running!');
 });
 
-// 1. Get Items API (Sheet1 မှ Product များကို Frontend သို့ ပို့ပေးမည်)
+// 1. Get Items API
 app.get('/api/items', async (req, res) => {
   try {
     if (!auth) {
@@ -135,7 +135,7 @@ app.post('/api/order', async (req, res) => {
       requestBody: { values: [rowValues] }
     });
 
-    const caption = `🛒 *New Order Received (Odoo)*\n\n` +
+    const caption = `🛒 *New Order Received*\n\n` +
                     `🆔 Order ID: \`${orderId}\`\n` +
                     `👤 Name: ${data.customer}\n` +
                     `📞 Phone: ${data.phone}\n` +
@@ -177,6 +177,7 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id;
+      const messageId = cb.message.message_id;
       const data = cb.data;
 
       if (data.startsWith('add_wb_')) {
@@ -191,6 +192,12 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
           chat_id: chatId, text: `❌ Order ID (${orderId}) အား Cancel လုပ်လိုက်ပါပြီ။`
         });
+        // Remove inline keyboard or update message
+        try {
+          await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup`, {
+            chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] }
+          });
+        } catch (e) {}
       }
       await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, { callback_query_id: cb.id });
     }
@@ -199,9 +206,14 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
       const msg = update.message;
       const chatId = msg.chat.id;
 
-      if (msg.text === '/pending' || msg.text === '/inprogress' || msg.text === '/finish') {
-        const statusMap = { '/pending': 'Pending', '/inprogress': 'In Progress', '/finish': 'Finish' };
-        await sendReportExcel(chatId, statusMap[msg.text]);
+      if (msg.text === '/pending') {
+        await sendOrdersListByStatus(chatId, 'Pending', true);
+      }
+      else if (msg.text === '/inprogress') {
+        await sendOrdersListByStatus(chatId, 'In Progress', false);
+      }
+      else if (msg.text === '/finish') {
+        await sendReportExcel(chatId, 'Finish');
       }
       else if (adminStates[chatId] && adminStates[chatId].action === 'waiting_waybill') {
         const waybillNo = msg.text.trim();
@@ -241,6 +253,7 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
 async function updateOrderStatus(orderId, status) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values;
+  if (!rows) return;
   for (let i = 0; i < rows.length; i++) {
     if (rows[i][10] === orderId) {
       await sheets.spreadsheets.values.update({
@@ -255,6 +268,7 @@ async function updateOrderStatus(orderId, status) {
 async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values;
+  if (!rows) return;
   for (let i = 0; i < rows.length; i++) {
     if (rows[i][10] === orderId) {
       const rowIndex = i + 1;
@@ -264,6 +278,60 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
       });
       break;
     }
+  }
+}
+
+// Send Pending or In Progress Lists directly in Telegram
+async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
+  const rows = res.data.values || [];
+  
+  // Status is at Column H (index 7) or M (index 12)
+  let filtered = rows.filter(r => (r[7] === statusFilter || r[12] === statusFilter));
+
+  if (filtered.length === 0) {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId, text: `📭 ${statusFilter} Orders များ မရှိသေးပါ။`
+    });
+    return;
+  }
+
+  for (let r of filtered) {
+    const orderId = r[10] || 'N/A';
+    const customer = r[1] || 'N/A';
+    const phone = r[2] || 'N/A';
+    const address = r[4] || 'N/A';
+    const items = r[5] || 'N/A';
+    const total = r[6] || 0;
+    const payment = r[9] || 'N/A';
+
+    const text = `📦 *${statusFilter} Order*\n\n` +
+                 `🆔 Order ID: \`${orderId}\`\n` +
+                 `👤 Name: ${customer}\n` +
+                 `📞 Phone: ${phone}\n` +
+                 `📍 Address: ${address}\n` +
+                 `🛍 Items: ${items}\n` +
+                 `💰 Payment: ${payment}\n` +
+                 `💵 Total: ${Number(total).toLocaleString()} Ks`;
+
+    let keyboardRows = [];
+    if (showAddWbButton) {
+      keyboardRows.push([
+        { text: "➕ Add WayBill", callback_data: `add_wb_${orderId}` },
+        { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
+      ]);
+    } else {
+      keyboardRows.push([
+        { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
+      ]);
+    }
+
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboardRows }
+    });
   }
 }
 
@@ -279,7 +347,7 @@ async function processExcelUpload(excelRows, chatId) {
 
   for (let i = 1; i < excelRows.length; i++) {
     const row = excelRows[i];
-    const waybill = row[4]?.toString().trim();
+    const waybill = row[4]?.toString().trim(); // Excel waybill column
     if (!waybill) continue;
 
     if (!existingWaybillsSheet3.has(waybill)) {
@@ -291,12 +359,15 @@ async function processExcelUpload(excelRows, chatId) {
       newRowsCount++;
     }
 
+    // Check Sheet2 to update status to "Finish" where waybill matches (Column M index 12 or Column L index 11)
     for (let j = 0; j < sheet2Rows.length; j++) {
       const s2Row = sheet2Rows[j];
-      const s2Waybill = s2Row[12]?.toString().trim();
+      const s2Waybill = (s2Row[12] || s2Row[11] || '').toString().trim();
+      
       if (s2Waybill === waybill) {
+        const rowIndex = j + 1;
         await sheets.spreadsheets.values.update({
-          spreadsheetId: GOOGLE_SHEET_ID, range: `Sheet2!H${j+1}`,
+          spreadsheetId: GOOGLE_SHEET_ID, range: `Sheet2!H${rowIndex}`,
           valueInputOption: 'USER_ENTERED', requestBody: { values: [["Finish"]] }
         });
         updatedOrdersCount++;
@@ -314,7 +385,7 @@ async function sendReportExcel(chatId, statusFilter) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
 
-  let filtered = rows.filter(r => r[7] === statusFilter);
+  let filtered = rows.filter(r => (r[7] === statusFilter || r[12] === statusFilter));
   let wbData = [["Date", "Customer", "Phone", "Address", "Items", "Total", "Status", "Payment", "OrderID", "Waybill"]];
   filtered.forEach(r => {
     wbData.push([r[0], r[1], r[2], r[4], r[5], r[6], r[7], r[9], r[10], r[12]]);
