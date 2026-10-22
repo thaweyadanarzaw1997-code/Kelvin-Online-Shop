@@ -7,8 +7,6 @@ const cloudinary = require('cloudinary').v2;
 const XLSX = require('xlsx');
 const fs = require('fs');
 const cors = require('cors');
-const Jimp = require('jimp');
-const FormData = require('form-data');
 
 const app = express();
 app.use(cors());
@@ -137,7 +135,8 @@ app.post('/api/order', async (req, res) => {
       requestBody: { values: [rowValues] }
     });
 
-    const caption = `✨ *FRAGRANCE BY KELVIN* ✨\n\n` +
+    const caption = `✨ *FRAGRANCE BY KELVIN* ✨\n` +
+                    `━━━━━━━━━━━━━━━━━━━\n` +
                     `🛒 *New Order Received*\n\n` +
                     `🆔 Order ID: \`${orderId}\`\n` +
                     `👤 Name: ${data.customer}\n` +
@@ -220,7 +219,7 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
       }
       else if (textMsg.startsWith('/ORD-') || textMsg.startsWith('/ord-')) {
         const lookupOrderId = textMsg.replace('/', '');
-        await sendVoucherPngByOrderId(chatId, lookupOrderId);
+        await sendVoucherCardByOrderId(chatId, lookupOrderId);
       }
       else if (adminStates[chatId] && adminStates[chatId].action === 'waiting_waybill') {
         const waybillNo = textMsg;
@@ -288,8 +287,8 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   }
 }
 
-// Generate PNG Voucher Image using Jimp and send as Photo
-async function sendVoucherPngByOrderId(chatId, orderId) {
+// Send Professional Voucher Card via Telegram when typing /ORD-xxxx
+async function sendVoucherCardByOrderId(chatId, orderId) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
   
@@ -315,30 +314,25 @@ async function sendVoucherPngByOrderId(chatId, orderId) {
   const items = foundRow[5] || 'N/A';
   const total = Number(foundRow[6] || 0).toLocaleString() + ' Ks';
   const status = foundRow[7] || 'N/A';
+  const photoUrl = foundRow[8] || '';
   const payment = foundRow[9] || 'N/A';
   const waybill = foundRow[12] || foundRow[11] || 'None';
 
-  // Create Voucher image using Jimp
-  const image = await Jimp.create(650, 850, 0xFFFAF9F6);
-  const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_32_BLACK);
-  const fontSub = await Jimp.loadFont(Jimp.FONT_SANS_14_BLACK);
-  const fontText = await Jimp.loadFont(Jimp.FONT_SANS_16_BLACK);
-
-  image.print(fontTitle, 0, 40, { text: 'FRAGRANCE', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 650);
-  image.print(fontSub, 0, 80, { text: 'BY KELVIN', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER }, 650);
-
-  image.print(fontText, 50, 130, `Order ID: ${orderId}`);
-  image.print(fontText, 50, 170, `Date: ${date}`);
-  image.print(fontText, 50, 210, `Customer: ${customer}`);
-  image.print(fontText, 50, 250, `Phone: ${phone}`);
-  image.print(fontText, 50, 290, `Address: ${address}`);
-  image.print(fontText, 50, 350, `Items: ${items}`);
-  image.print(fontText, 50, 530, `Payment: ${payment}`);
-  image.print(fontText, 50, 570, `Status: ${status}`);
-  image.print(fontText, 50, 610, `Waybill: ${waybill}`);
-  image.print(fontText, 50, 680, `Total Amount: ${total}`);
-
-  const pngBuffer = await image.getBufferAsync(Jimp.MIME_PNG);
+  const voucherText = `✨ *FRAGRANCE BY KELVIN* ✨\n` +
+                      `━━━━━━━━━━━━━━━━━━━\n` +
+                      `📄 *OFFICIAL ORDER VOUCHER*\n\n` +
+                      `🆔 Order ID: \`${orderId}\`\n` +
+                      `📅 Date: ${date}\n` +
+                      `👤 Name: ${customer}\n` +
+                      `📞 Phone: ${phone}\n` +
+                      `📍 Address: ${address}\n\n` +
+                      `🛍 *Items:* \n${items}\n\n` +
+                      `💰 Payment: ${payment}\n` +
+                      `💵 Total: ${total}\n` +
+                      `📦 Status: ${status}\n` +
+                      `🚚 Waybill: ${waybill}\n` +
+                      `━━━━━━━━━━━━━━━━━━━\n` +
+                      `_Thank you for shopping with us!_`;
 
   let keyboardRows = [];
   if (status === 'Pending') {
@@ -354,18 +348,22 @@ async function sendVoucherPngByOrderId(chatId, orderId) {
 
   const replyMarkup = keyboardRows.length > 0 ? { inline_keyboard: keyboardRows } : undefined;
 
-  const formData = new FormData();
-  formData.append('chat_id', chatId);
-  formData.append('photo', pngBuffer, { filename: `${orderId}.png`, contentType: 'image/png' });
-  formData.append('caption', `✨ Voucher for Order: \`${orderId}\``);
-  formData.append('parse_mode', 'Markdown');
-  if (replyMarkup) {
-    formData.append('reply_markup', JSON.stringify(replyMarkup));
+  if (photoUrl && photoUrl.startsWith('http')) {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+      chat_id: chatId,
+      photo: photoUrl,
+      caption: voucherText,
+      parse_mode: 'Markdown',
+      reply_markup: replyMarkup
+    });
+  } else {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: voucherText,
+      parse_mode: 'Markdown',
+      reply_markup: replyMarkup
+    });
   }
-
-  await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, formData, {
-    headers: formData.getHeaders()
-  });
 }
 
 async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
@@ -483,7 +481,7 @@ async function sendReportExcel(chatId, statusFilter) {
   const filePath = `/tmp/${statusFilter}_Report.xlsx`;
   XLSX.writeFile(wb, filePath);
 
-  const formData = new FormData();
+  const formData = new (require('form-data'))();
   formData.append('chat_id', chatId);
   formData.append('document', fs.createReadStream(filePath), { filename: `${statusFilter}_Report.xlsx` });
   formData.append('caption', `📋 Report for Status: *${statusFilter}*`);
