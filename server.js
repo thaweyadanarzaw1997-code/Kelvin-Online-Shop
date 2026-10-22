@@ -7,6 +7,8 @@ const cloudinary = require('cloudinary').v2;
 const XLSX = require('xlsx');
 const fs = require('fs');
 const cors = require('cors');
+const sharp = require('sharp');
+const FormData = require('form-data');
 
 const app = express();
 app.use(cors());
@@ -217,9 +219,8 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
         await sendReportExcel(chatId, 'Finish');
       }
       else if (textMsg.startsWith('/ORD-') || textMsg.startsWith('/ord-')) {
-        // Handle /ORD-xxxx lookup command
         const lookupOrderId = textMsg.replace('/', '');
-        await sendVoucherByOrderId(chatId, lookupOrderId);
+        await sendVoucherPngByOrderId(chatId, lookupOrderId);
       }
       else if (adminStates[chatId] && adminStates[chatId].action === 'waiting_waybill') {
         const waybillNo = textMsg;
@@ -287,8 +288,8 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   }
 }
 
-// Function to send Voucher photo/details when typing /ORD-xxxx
-async function sendVoucherByOrderId(chatId, orderId) {
+// Generate PNG Voucher Image with Logo and send as Photo
+async function sendVoucherPngByOrderId(chatId, orderId) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
   
@@ -302,7 +303,7 @@ async function sendVoucherByOrderId(chatId, orderId) {
 
   if (!foundRow) {
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId, text: `❌ Order ID (${orderId}) ကို ရှာမတွေ့ပါ။ ကျေးဇူးပြု၍ နံပါတ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။`
+      chat_id: chatId, text: `❌ Order ID (${orderId}) ကို ရှာမတွေ့ပါ။ နံပါတ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။`
     });
     return;
   }
@@ -312,27 +313,77 @@ async function sendVoucherByOrderId(chatId, orderId) {
   const phone = foundRow[2] || 'N/A';
   const address = foundRow[4] || 'N/A';
   const items = foundRow[5] || 'N/A';
-  const total = foundRow[6] || 0;
+  const total = Number(foundRow[6] || 0).toLocaleString() + ' Ks';
   const status = foundRow[7] || 'N/A';
-  const photoUrl = foundRow[8] || '';
   const payment = foundRow[9] || 'N/A';
-  const waybill = foundRow[12] || foundRow[11] || 'ยังไม่ระบุ / None';
+  const waybill = foundRow[12] || foundRow[11] || 'None';
 
-  const voucherText = `✨ *FRAGRANCE BY KELVIN* ✨\n` +
-                      `━━━━━━━━━━━━━━━━━━━\n` +
-                      `📄 *OFFICIAL ORDER VOUCHER*\n\n` +
-                      `🆔 Order ID: \`${orderId}\`\n` +
-                      `📅 Date: ${date}\n` +
-                      `👤 Name: ${customer}\n` +
-                      `📞 Phone: ${phone}\n` +
-                      `📍 Address: ${address}\n\n` +
-                      `🛍 *Items:* \n${items}\n\n` +
-                      `💰 Payment: ${payment}\n` +
-                      `💵 Total: ${Number(total).toLocaleString()} Ks\n` +
-                      `📦 Status: ${status}\n` +
-                      `🚚 Waybill: ${waybill}\n` +
-                      `━━━━━━━━━━━━━━━━━━━\n` +
-                      `_Thank you for shopping with us!_`;
+  // Build SVG for Voucher with Logo branding
+  const svgWidth = 700;
+  const svgHeight = 900;
+  const svgContent = `
+    <svg width="${svgWidth}" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg">
+      <style>
+        .brand-title { font-family: serif; font-weight: bold; fill: #c5a059; font-size: 32px; text-anchor: middle; letter-spacing: 2px; }
+        .brand-sub { font-family: sans-serif; font-weight: bold; fill: #666; font-size: 12px; letter-spacing: 6px; text-anchor: middle; }
+        .voucher-title { font-family: sans-serif; font-weight: bold; fill: #333; font-size: 18px; text-anchor: middle; letter-spacing: 1px; }
+        .label { font-family: sans-serif; font-weight: bold; fill: #555; font-size: 16px; }
+        .value { font-family: sans-serif; fill: #222; font-size: 16px; }
+        .total-label { font-family: sans-serif; font-weight: bold; fill: #81602d; font-size: 20px; }
+        .total-value { font-family: sans-serif; font-weight: bold; fill: #c5a059; font-size: 24px; text-anchor: end; }
+      </style>
+      
+      <!-- Background & Border -->
+      <rect width="100%" height="100%" fill="#faf9f6" rx="20" ry="20" stroke="#c5a059" stroke-width="4"/>
+      
+      <!-- Header / Logo Area -->
+      <circle cx="350" cy="75" r="35" fill="#121212" stroke="#c5a059" stroke-width="2"/>
+      <text x="350" y="87" font-family="serif" font-size="32" font-weight="bold" fill="#c5a059" text-anchor="middle">K</text>
+      
+      <text x="350" y="145" class="brand-title">FRAGRANCE</text>
+      <text x="350" y="170" class="brand-sub">BY KELVIN</text>
+      
+      <line x1="60" y1="195" x2="640" y2="195" stroke="#e5b33d" stroke-dasharray="6,6" stroke-width="2"/>
+      <text x="350" y="230" class="voucher-title">OFFICIAL ORDER VOUCHER</text>
+      
+      <!-- Details Section -->
+      <text x="80" y="280" class="label">Order ID:</text>
+      <text x="220" y="280" class="value" font-weight="bold" fill="#c5a059">${orderId}</text>
+      
+      <text x="80" y="325" class="label">Date:</text>
+      <text x="220" y="325" class="value">${date}</text>
+      
+      <text x="80" y="370" class="label">Customer:</text>
+      <text x="220" y="370" class="value">${customer}</text>
+      
+      <text x="80" y="415" class="label">Phone:</text>
+      <text x="220" y="415" class="value">${phone}</text>
+      
+      <text x="80" y="460" class="label">Address:</text>
+      <text x="220" y="460" class="value">${address}</text>
+      
+      <line x1="60" y1="500" x2="640" y2="500" stroke="#ddd" stroke-width="1"/>
+      
+      <text x="80" y="540" class="label">Items:</text>
+      <text x="220" y="540" class="value" font-size="15">${items}</text>
+      
+      <line x1="60" y1="640" x2="640" y2="640" stroke="#ddd" stroke-width="1"/>
+      
+      <text x="80" y="685" class="label">Payment:</text>
+      <text x="220" y="685" class="value">${payment}</text>
+      
+      <text x="80" y="730" class="label">Status / Waybill:</text>
+      <text x="220" y="730" class="value">${status} (${waybill})</text>
+      
+      <!-- Total Box -->
+      <rect x="60" y="770" width="580" height="70" fill="#fef9e7" rx="10" ry="10" stroke="#eecc6c" stroke-width="1.5"/>
+      <text x="95" y="813" class="total-label">Total Amount:</text>
+      <text x="605" y="815" class="total-value">${total}</text>
+    </svg>
+  `;
+
+  // Convert SVG to PNG buffer using sharp
+  const pngBuffer = await sharp(Buffer.from(svgContent)).png().toBuffer();
 
   let keyboardRows = [];
   if (status === 'Pending') {
@@ -348,22 +399,19 @@ async function sendVoucherByOrderId(chatId, orderId) {
 
   const replyMarkup = keyboardRows.length > 0 ? { inline_keyboard: keyboardRows } : undefined;
 
-  if (photoUrl && photoUrl.startsWith('http')) {
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-      chat_id: chatId,
-      photo: photoUrl,
-      caption: voucherText,
-      parse_mode: 'Markdown',
-      reply_markup: replyMarkup
-    });
-  } else {
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: voucherText,
-      parse_mode: 'Markdown',
-      reply_markup: replyMarkup
-    });
+  // Send PNG Buffer as Photo via FormData
+  const formData = new FormData();
+  formData.append('chat_id', chatId);
+  formData.append('photo', pngBuffer, { filename: `${orderId}.png`, contentType: 'image/png' });
+  formData.append('caption', `✨ Voucher for Order: \`${orderId}\``);
+  formData.append('parse_mode', 'Markdown');
+  if (replyMarkup) {
+    formData.append('reply_markup', JSON.stringify(replyMarkup));
   }
+
+  await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, formData, {
+    headers: formData.getHeaders()
+  });
 }
 
 async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
@@ -481,9 +529,9 @@ async function sendReportExcel(chatId, statusFilter) {
   const filePath = `/tmp/${statusFilter}_Report.xlsx`;
   XLSX.writeFile(wb, filePath);
 
-  const formData = new (require('form-data'))();
+  const formData = new FormData();
   formData.append('chat_id', chatId);
-  formData.append('document', fs.createReadStream(filePath));
+  formData.append('document', fs.createReadStream(filePath), { filename: `${statusFilter}_Report.xlsx` });
   formData.append('caption', `📋 Report for Status: *${statusFilter}*`);
 
   await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, formData, {
