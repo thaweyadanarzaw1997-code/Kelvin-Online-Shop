@@ -192,7 +192,6 @@ app.post('/api/telegram-webhook', upload.single('document'), async (req, res) =>
         await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
           chat_id: chatId, text: `❌ Order ID (${orderId}) အား Cancel လုပ်လိုက်ပါပြီ။`
         });
-        // Remove inline keyboard or update message
         try {
           await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup`, {
             chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] }
@@ -281,12 +280,10 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   }
 }
 
-// Send Pending or In Progress Lists directly in Telegram
 async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const rows = res.data.values || [];
   
-  // Status is at Column H (index 7) or M (index 12)
   let filtered = rows.filter(r => (r[7] === statusFilter || r[12] === statusFilter));
 
   if (filtered.length === 0) {
@@ -347,7 +344,8 @@ async function processExcelUpload(excelRows, chatId) {
 
   for (let i = 1; i < excelRows.length; i++) {
     const row = excelRows[i];
-    const waybill = row[4]?.toString().trim(); // Excel waybill column
+    // ပို့ဆောင်ရေး Excel ဖိုင်၏ Column E (Index 4) တွင် Waybill ပါရှိ므로 ၎င်းကို အဓိက ယူပါမည်။
+    const waybill = (row[4] || row[3] || row[2] || '').toString().trim();
     if (!waybill) continue;
 
     if (!existingWaybillsSheet3.has(waybill)) {
@@ -359,12 +357,12 @@ async function processExcelUpload(excelRows, chatId) {
       newRowsCount++;
     }
 
-    // Check Sheet2 to update status to "Finish" where waybill matches (Column M index 12 or Column L index 11)
+    // Sheet2 တွင် Waybill တူညီသော Order ကို ရှာပြီး Status ကို "Finish" သို့ ပြောင်းမည်
     for (let j = 0; j < sheet2Rows.length; j++) {
       const s2Row = sheet2Rows[j];
-      const s2Waybill = (s2Row[12] || s2Row[11] || '').toString().trim();
+      const s2Waybill = (s2Row[11] || s2Row[12] || '').toString().trim();
       
-      if (s2Waybill === waybill) {
+      if (s2Waybill && s2Waybill === waybill) {
         const rowIndex = j + 1;
         await sheets.spreadsheets.values.update({
           spreadsheetId: GOOGLE_SHEET_ID, range: `Sheet2!H${rowIndex}`,
