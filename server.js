@@ -289,79 +289,86 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
 
 // Send Professional Voucher Card via Telegram when typing /ORD-xxxx
 async function sendVoucherCardByOrderId(chatId, orderId) {
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
-  const rows = res.data.values || [];
-  
-  let foundRow = null;
-  for (let r of rows) {
-    if (r[10] && r[10].toString().trim().toLowerCase() === orderId.toLowerCase()) {
-      foundRow = r;
-      break;
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
+    const rows = res.data.values || [];
+    
+    let foundRow = null;
+    for (let r of rows) {
+      if (r[10] && r[10].toString().trim().toLowerCase() === orderId.toLowerCase()) {
+        foundRow = r;
+        break;
+      }
     }
-  }
 
-  if (!foundRow) {
+    if (!foundRow) {
+      await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId, text: `❌ Order ID (${orderId}) ကို ရှာမတွေ့ပါ။ နံပါတ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။`
+      });
+      return;
+    }
+
+    const date = foundRow[0] || 'N/A';
+    const customer = foundRow[1] || 'N/A';
+    const phone = foundRow[2] || 'N/A';
+    const address = foundRow[4] || 'N/A';
+    const items = foundRow[5] || 'N/A';
+    const total = Number(foundRow[6] || 0).toLocaleString() + ' Ks';
+    const status = foundRow[7] || 'N/A';
+    const photoUrl = foundRow[8] || '';
+    const payment = foundRow[9] || 'N/A';
+    const waybill = foundRow[11] || foundRow[12] || 'None';
+
+    const voucherText = `✨ *FRAGRANCE BY KELVIN* ✨\n` +
+                        `━━━━━━━━━━━━━━━━━━━\n` +
+                        `📄 *OFFICIAL ORDER VOUCHER*\n\n` +
+                        `🆔 Order ID: \`${orderId}\`\n` +
+                        `📅 Date: ${date}\n` +
+                        `👤 Name: ${customer}\n` +
+                        `📞 Phone: ${phone}\n` +
+                        `📍 Address: ${address}\n\n` +
+                        `🛍 *Items:* \n${items}\n\n` +
+                        `💰 Payment: ${payment}\n` +
+                        `💵 Total: ${total}\n` +
+                        `📦 Status: ${status}\n` +
+                        `🚚 Waybill: ${waybill}\n` +
+                        `━━━━━━━━━━━━━━━━━━━\n` +
+                        `_Thank you for shopping with us!_`;
+
+    let keyboardRows = [];
+    if (status === 'Pending') {
+      keyboardRows.push([
+        { text: "➕ Add WayBill", callback_data: `add_wb_${orderId}` },
+        { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
+      ]);
+    } else if (status === 'In Progress') {
+      keyboardRows.push([
+        { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
+      ]);
+    }
+
+    const replyMarkup = keyboardRows.length > 0 ? { inline_keyboard: keyboardRows } : undefined;
+
+    if (photoUrl && photoUrl.startsWith('http')) {
+      await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+        chat_id: chatId,
+        photo: photoUrl,
+        caption: voucherText,
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup
+      });
+    } else {
+      await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId,
+        text: voucherText,
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup
+      });
+    }
+  } catch (err) {
+    console.error("Voucher Error:", err);
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId, text: `❌ Order ID (${orderId}) ကို ရှာမတွေ့ပါ။ နံပါတ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။`
-    });
-    return;
-  }
-
-  const date = foundRow[0] || 'N/A';
-  const customer = foundRow[1] || 'N/A';
-  const phone = foundRow[2] || 'N/A';
-  const address = foundRow[4] || 'N/A';
-  const items = foundRow[5] || 'N/A';
-  const total = Number(foundRow[6] || 0).toLocaleString() + ' Ks';
-  const status = foundRow[7] || 'N/A';
-  const photoUrl = foundRow[8] || '';
-  const payment = foundRow[9] || 'N/A';
-  const waybill = foundRow[12] || foundRow[11] || 'None';
-
-  const voucherText = `✨ *FRAGRANCE BY KELVIN* ✨\n` +
-                      `━━━━━━━━━━━━━━━━━━━\n` +
-                      `📄 *OFFICIAL ORDER VOUCHER*\n\n` +
-                      `🆔 Order ID: \`${orderId}\`\n` +
-                      `📅 Date: ${date}\n` +
-                      `👤 Name: ${customer}\n` +
-                      `📞 Phone: ${phone}\n` +
-                      `📍 Address: ${address}\n\n` +
-                      `🛍 *Items:* \n${items}\n\n` +
-                      `💰 Payment: ${payment}\n` +
-                      `💵 Total: ${total}\n` +
-                      `📦 Status: ${status}\n` +
-                      `🚚 Waybill: ${waybill}\n` +
-                      `━━━━━━━━━━━━━━━━━━━\n` +
-                      `_Thank you for shopping with us!_`;
-
-  let keyboardRows = [];
-  if (status === 'Pending') {
-    keyboardRows.push([
-      { text: "➕ Add WayBill", callback_data: `add_wb_${orderId}` },
-      { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
-    ]);
-  } else if (status === 'In Progress') {
-    keyboardRows.push([
-      { text: "❌ Cancel", callback_data: `cancel_${orderId}` }
-    ]);
-  }
-
-  const replyMarkup = keyboardRows.length > 0 ? { inline_keyboard: keyboardRows } : undefined;
-
-  if (photoUrl && photoUrl.startsWith('http')) {
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-      chat_id: chatId,
-      photo: photoUrl,
-      caption: voucherText,
-      parse_mode: 'Markdown',
-      reply_markup: replyMarkup
-    });
-  } else {
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: voucherText,
-      parse_mode: 'Markdown',
-      reply_markup: replyMarkup
+      chat_id: chatId, text: `⚠️ Error: ${err.message}`
     });
   }
 }
@@ -425,15 +432,31 @@ async function processExcelUpload(excelRows, chatId) {
   const sheet2Res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
   const sheet2Rows = sheet2Res.data.values || [];
 
-  const existingWaybillsSheet3 = new Set(sheet3Values.slice(1).map(r => r[4]?.toString().trim()));
+  const existingWaybillsSheet3 = new Set();
+  for (let r of sheet3Values.slice(1)) {
+    for (let cell of r) {
+      if (cell) existingWaybillsSheet3.add(cell.toString().trim());
+    }
+  }
+
   let newRowsCount = 0;
   let updatedOrdersCount = 0;
 
   for (let i = 1; i < excelRows.length; i++) {
     const row = excelRows[i];
-    const waybill = (row[4] || row[3] || row[2] || '').toString().trim();
+    if (!row || row.length === 0) continue;
+
+    // Flexible waybill detection from Excel row columns (Index 4, 3, 2, 1, 0)
+    let waybill = '';
+    for (let idx of [4, 3, 2, 1, 0]) {
+      if (row[idx] && row[idx].toString().trim() !== '') {
+        waybill = row[idx].toString().trim();
+        break;
+      }
+    }
     if (!waybill) continue;
 
+    // Append to Sheet3 if new
     if (!existingWaybillsSheet3.has(waybill)) {
       await sheets.spreadsheets.values.append({
         spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet3!A:O',
@@ -443,14 +466,33 @@ async function processExcelUpload(excelRows, chatId) {
       newRowsCount++;
     }
 
+    // Check Sheet2 to update status to "Finish" matching Waybill OR Order ID
     for (let j = 0; j < sheet2Rows.length; j++) {
       const s2Row = sheet2Rows[j];
-      const s2Waybill = (s2Row[11] || s2Row[12] || '').toString().trim();
-      
-      if (s2Waybill && s2Waybill === waybill) {
+      const s2OrderId = (s2Row[10] || '').toString().trim(); // Column K
+      const s2Waybill = (s2Row[11] || s2Row[12] || '').toString().trim(); // Column L or M
+
+      let matchFound = false;
+      if (s2Waybill && s2Waybill.toLowerCase() === waybill.toLowerCase()) {
+        matchFound = true;
+      } else {
+        // Check if any cell in the excel row contains the orderId
+        for (let cell of row) {
+          if (cell && s2OrderId && cell.toString().trim().toLowerCase() === s2OrderId.toLowerCase()) {
+            matchFound = true;
+            break;
+          }
+        }
+      }
+
+      if (matchFound) {
         const rowIndex = j + 1;
         await sheets.spreadsheets.values.update({
           spreadsheetId: GOOGLE_SHEET_ID, range: `Sheet2!H${rowIndex}`,
+          valueInputOption: 'USER_ENTERED', requestBody: { values: [["Finish"]] }
+        });
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: GOOGLE_SHEET_ID, range: `Sheet2!M${rowIndex}`,
           valueInputOption: 'USER_ENTERED', requestBody: { values: [["Finish"]] }
         });
         updatedOrdersCount++;
