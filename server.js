@@ -287,7 +287,6 @@ async function updateOrderWaybillAndStatus(orderId, waybill, status) {
   }
 }
 
-// Send Professional Voucher Card via Telegram when typing /ORD-xxxx
 async function sendVoucherCardByOrderId(chatId, orderId) {
   try {
     const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet2!A:M' });
@@ -351,18 +350,11 @@ async function sendVoucherCardByOrderId(chatId, orderId) {
 
     if (photoUrl && photoUrl.startsWith('http')) {
       await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-        chat_id: chatId,
-        photo: photoUrl,
-        caption: voucherText,
-        parse_mode: 'Markdown',
-        reply_markup: replyMarkup
+        chat_id: chatId, photo: photoUrl, caption: voucherText, parse_mode: 'Markdown', reply_markup: replyMarkup
       });
     } else {
       await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        chat_id: chatId,
-        text: voucherText,
-        parse_mode: 'Markdown',
-        reply_markup: replyMarkup
+        chat_id: chatId, text: voucherText, parse_mode: 'Markdown', reply_markup: replyMarkup
       });
     }
   } catch (err) {
@@ -418,10 +410,7 @@ async function sendOrdersListByStatus(chatId, statusFilter, showAddWbButton) {
     }
 
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: text,
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: keyboardRows }
+      chat_id: chatId, text: text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboardRows }
     });
   }
 }
@@ -446,7 +435,6 @@ async function processExcelUpload(excelRows, chatId) {
     const row = excelRows[i];
     if (!row || row.length === 0) continue;
 
-    // Flexible waybill detection from Excel row columns (Index 4, 3, 2, 1, 0)
     let waybill = '';
     for (let idx of [4, 3, 2, 1, 0]) {
       if (row[idx] && row[idx].toString().trim() !== '') {
@@ -456,7 +444,6 @@ async function processExcelUpload(excelRows, chatId) {
     }
     if (!waybill) continue;
 
-    // Append to Sheet3 if new
     if (!existingWaybillsSheet3.has(waybill)) {
       await sheets.spreadsheets.values.append({
         spreadsheetId: GOOGLE_SHEET_ID, range: 'Sheet3!A:O',
@@ -466,17 +453,15 @@ async function processExcelUpload(excelRows, chatId) {
       newRowsCount++;
     }
 
-    // Check Sheet2 to update status to "Finish" matching Waybill OR Order ID
     for (let j = 0; j < sheet2Rows.length; j++) {
       const s2Row = sheet2Rows[j];
-      const s2OrderId = (s2Row[10] || '').toString().trim(); // Column K
-      const s2Waybill = (s2Row[11] || s2Row[12] || '').toString().trim(); // Column L or M
+      const s2OrderId = (s2Row[10] || '').toString().trim();
+      const s2Waybill = (s2Row[11] || s2Row[12] || '').toString().trim();
 
       let matchFound = false;
       if (s2Waybill && s2Waybill.toLowerCase() === waybill.toLowerCase()) {
         matchFound = true;
       } else {
-        // Check if any cell in the excel row contains the orderId
         for (let cell of row) {
           if (cell && s2OrderId && cell.toString().trim().toLowerCase() === s2OrderId.toLowerCase()) {
             matchFound = true;
